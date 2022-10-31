@@ -1,7 +1,13 @@
+from typing import Dict, Generator, List, Tuple
+
 import affine
+import geopandas as gpd
 import numpy as np
 import rasterio
+from constants import CRS_EPSG, NUM_PARALLEL_JOBS
+from joblib import Parallel, delayed
 from rasterio.enums import Resampling
+from shapely.geometry import Polygon
 
 
 def normalize(x: np.array, lower: int, upper: int):
@@ -84,3 +90,36 @@ def calculate_ndvi(input_rgbi_raster_file: str, output_file: str = None):
             dst.write(ndvi_band, 1)
 
     return ndvi_band
+
+
+def build_geodataframe_inputs(
+    coordinates: List[Tuple[int, int]], cell_value: int
+) -> Dict[int, Polygon]:
+    dict = {"cell_value": [cell_value], "geometry": [Polygon(coordinates)]}
+    return dict
+
+
+def raster_to_polygons(shapes_from_raster: Generator, parallel: bool = True) -> gpd.GeoDataFrame:
+
+    if parallel:
+        print("Running raster to polygons in parallel to speed up the process")
+        polygons_dicts = Parallel(n_jobs=NUM_PARALLEL_JOBS, backend="loky")(
+            [
+                delayed(build_geodataframe_inputs)(polygon.get("coordinates")[0], value)
+                for polygon, value in shapes_from_raster
+            ]
+        )
+    else:
+        print("Running raster to polygons sequentially, it could take some time...")
+        polygons_dicts = []
+        for polygon, value in shapes_from_raster:
+            polygons_dicts.append(build_geodataframe_inputs(polygon.get("coordinates")[0], value))
+
+    polygons_dict_gdf = {"cell_value": [], "geometry": []}
+
+    for poly in polygons_dicts:
+        cell_value, geometry = poly.get("cell_value")[0], poly.get("geometry")[0]
+        polygons_dict_gdf["cell_value"].append(cell_value)
+        polygons_dict_gdf["geometry"].append(geometry)
+
+    return gpd.GeoDataFrame(data=polygons_dict_gdf, crs=CRS_EPSG)

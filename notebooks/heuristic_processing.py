@@ -1,5 +1,4 @@
 # %%
-import numpy as np
 import rasterio
 from rasterio.plot import show
 
